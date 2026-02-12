@@ -1,21 +1,23 @@
 from passlib.context import CryptContext
 from services.banco import conectar
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ✅ NÃO usa bcrypt (evita erro no Streamlit Cloud).
+# PBKDF2-SHA256 é seguro e não precisa de libs nativas.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def _hash_senha(senha: str) -> str:
     return pwd_context.hash(senha)
 
 
-def criar_usuario(username: str, senha: str, perfil: str):
+def criar_ou_atualizar_usuario(username: str, senha: str, perfil: str):
     conn = conectar()
     cur = conn.cursor()
 
+    senha_hash = _hash_senha(senha)
+
     cur.execute("SELECT id FROM usuarios WHERE username = ?", (username,))
     existe = cur.fetchone()
-
-    senha_hash = _hash_senha(senha)
 
     if existe:
         cur.execute(
@@ -36,23 +38,22 @@ def autenticar(username: str, senha: str):
     conn = conectar()
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT senha, perfil FROM usuarios WHERE username = ?",
-        (username,),
-    )
-
+    cur.execute("SELECT senha, perfil FROM usuarios WHERE username = ?", (username,))
     row = cur.fetchone()
     conn.close()
 
     if not row:
         return None
 
-    senha_hash, perfil = row
+    senha_salva, perfil = row
 
+    # Se for hash reconhecido, verifica
     try:
-        if pwd_context.verify(senha, senha_hash):
+        if pwd_context.verify(senha, senha_salva):
             return perfil
     except Exception:
+        # Se tiver senhas antigas em texto puro, você pode migrar aqui.
+        # Por enquanto, só falha o login.
         return None
 
     return None
@@ -60,10 +61,6 @@ def autenticar(username: str, senha: str):
 
 def garantir_admin_padrao():
     """
-    Garante que o usuário jean.silva exista e tenha a senha correta.
+    Garante o usuário ADMIN fixo solicitado.
     """
-    usuario = "jean.silva"
-    senha = "Wiz@2019"
-    perfil = "ADMIN"
-
-    criar_usuario(usuario, senha, perfil)
+    criar_ou_atualizar_usuario("jean.silva", "Wiz@2019", "ADMIN")
