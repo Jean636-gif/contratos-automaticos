@@ -1,4 +1,5 @@
 streamlit
 requests
 python-docx
-penai
+passlib[bcrypt]
+
