@@ -13,10 +13,9 @@ def _hash_senha(senha: str) -> str:
 def criar_usuario(username: str, senha: str, perfil: str):
     conn = conectar()
     cur = conn.cursor()
-    senha_hash = _hash_senha(senha)
     cur.execute(
         "INSERT INTO usuarios (username, senha, perfil) VALUES (?, ?, ?)",
-        (username, senha_hash, perfil),
+        (username, _hash_senha(senha), perfil),
     )
     conn.commit()
     conn.close()
@@ -35,16 +34,15 @@ def autenticar(username: str, senha: str):
 
     senha_salva, perfil = row
 
-    # 1) Tenta verificar como hash bcrypt (normal)
+    # 1) Se for hash reconhecido, verifica normal
     try:
         ok = pwd_context.verify(senha, senha_salva)
         conn.close()
         return perfil if ok else None
 
     except UnknownHashError:
-        # 2) Caso antigo: senha salva não é hash reconhecido.
-        #    Estratégia: se for senha em texto puro (ou outro formato),
-        #    compara direto. Se bater, rehash pra bcrypt e salva.
+        # 2) Caso antigo: senha estava salva em texto puro ou formato estranho.
+        #    Se bater com a senha digitada, migra pra bcrypt e autentica.
         if senha_salva == senha:
             novo_hash = _hash_senha(senha)
             cur.execute(
@@ -61,10 +59,10 @@ def autenticar(username: str, senha: str):
 
 def garantir_admin_padrao():
     """
-    Garante que exista um admin com senha BCRYPT.
-    Se existir admin com senha inválida (não-hash), corrige para uma senha segura padrão.
+    Garante que exista admin e que a senha esteja em BCRYPT válido.
+    Se houver admin com senha antiga/estranha, força reset para a senha abaixo.
     """
-    senha_segura = "TroqueEssaSenhaAgora!2026"
+    senha_admin = "TroqueEssaSenhaAgora!2026"
 
     conn = conectar()
     cur = conn.cursor()
@@ -73,10 +71,9 @@ def garantir_admin_padrao():
     row = cur.fetchone()
 
     if not row:
-        # cria admin novo
         cur.execute(
             "INSERT INTO usuarios (username, senha, perfil) VALUES (?, ?, ?)",
-            ("admin", _hash_senha(senha_segura), "ADMIN"),
+            ("admin", _hash_senha(senha_admin), "ADMIN"),
         )
         conn.commit()
         conn.close()
@@ -84,17 +81,19 @@ def garantir_admin_padrao():
 
     senha_salva = row[0]
 
-    # Se o hash for reconhecido, não mexe
+    # identify() retorna string do esquema OU None (não reconhecido)
+    esquema = None
     try:
-        pwd_context.identify(senha_salva)
-        conn.close()
-        return
+        esquema = pwd_context.identify(senha_salva)
     except Exception:
-        # Senha antiga em formato estranho → força migração para bcrypt
+        esquema = None
+
+    # Se não reconhece o hash (None), ou seja, é legado -> reseta pra bcrypt
+    if esquema is None:
         cur.execute(
             "UPDATE usuarios SET senha = ?, perfil = ? WHERE username = ?",
-            (_hash_senha(senha_segura), "ADMIN", "admin"),
+            (_hash_senha(senha_admin), "ADMIN", "admin"),
         )
         conn.commit()
-        conn.close()
-        return
+
+    conn.close()
