@@ -1,8 +1,13 @@
+import os
 from passlib.context import CryptContext
 from services.banco import conectar
 
-# ✅ NÃO usa bcrypt (evita erro no Streamlit Cloud).
-# PBKDF2-SHA256 é seguro e não precisa de libs nativas.
+try:
+    import streamlit as st
+except Exception:
+    st = None
+
+# ✅ seguro e 100% Python (não depende de bcrypt)
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
@@ -37,7 +42,6 @@ def criar_ou_atualizar_usuario(username: str, senha: str, perfil: str):
 def autenticar(username: str, senha: str):
     conn = conectar()
     cur = conn.cursor()
-
     cur.execute("SELECT senha, perfil FROM usuarios WHERE username = ?", (username,))
     row = cur.fetchone()
     conn.close()
@@ -45,22 +49,45 @@ def autenticar(username: str, senha: str):
     if not row:
         return None
 
-    senha_salva, perfil = row
+    senha_hash, perfil = row
 
-    # Se for hash reconhecido, verifica
     try:
-        if pwd_context.verify(senha, senha_salva):
+        if pwd_context.verify(senha, senha_hash):
             return perfil
     except Exception:
-        # Se tiver senhas antigas em texto puro, você pode migrar aqui.
-        # Por enquanto, só falha o login.
         return None
 
     return None
 
 
+def _ler_admin_credenciais():
+    # 1) Secrets (Streamlit Cloud)
+    username = ""
+    password = ""
+    if st is not None:
+        try:
+            username = str(st.secrets.get("ADMIN_USERNAME", "")).strip()
+            password = str(st.secrets.get("ADMIN_PASSWORD", ""))
+        except Exception:
+            username = ""
+            password = ""
+
+    # 2) Env vars (fallback)
+    if not username or not password:
+        username = os.getenv("ADMIN_USERNAME", "").strip()
+        password = os.getenv("ADMIN_PASSWORD", "")
+
+    return username, password
+
+
 def garantir_admin_padrao():
     """
-    Garante o usuário ADMIN fixo solicitado.
+    Cria/atualiza o admin SEMPRE a partir de Secrets/env.
+    Retorna True se conseguiu ler credenciais; False se não.
     """
-    criar_ou_atualizar_usuario("jean.silva", "Wiz@2019", "ADMIN")
+    username, password = _ler_admin_credenciais()
+    if not username or not password:
+        return False
+
+    criar_ou_atualizar_usuario(username, password, "ADMIN")
+    return True
